@@ -1,0 +1,11 @@
+{
+  "servers": {
+    "clickup": {
+      "command": ["npx", "-y", "mcp-remote", "https://mcp.clickup.com/mcp"]
+    },
+    "obscura": {
+      "url": "http://127.0.0.1:3000/mcp",
+      "start": ["obscura", "mcp", "--http", "--port", "3000"]
+    }
+  }
+}
