@@ -1,0 +1,18 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+# Packaging and build output
+build/
+dist/
+*.egg-info/
+
+# Nix build symlinks
+result
+result-*
+
+# Editors and OS
+.DS_Store
+*.swp
