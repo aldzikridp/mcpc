@@ -24,6 +24,7 @@ mcpc = "mcp_bridge:cli"
 
 [tool.setuptools]
 # py-modules, not packages: the bridge is one file installed as a console script.
+package-dir = { "" = "scripts" }
 py-modules = ["mcp_bridge"]
 
 [tool.setuptools.package-data]
