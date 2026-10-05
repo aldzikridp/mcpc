@@ -37,9 +37,13 @@ mkdir -p ~/.config/hax/skills
 cp -r MCP/example/skills/mcp ~/.config/hax/skills/
 ```
 
-The bridge reads `~/.config/hax/mcp/config.json` by default and `HAX_MCP_CONFIG` or `--config FILE`
-when set. A project can shadow the skill by putting its own at `.agents/skills/mcp/SKILL.md`.
-Python 3 is the only requirement; there are no packages to install.
+Config resolution, highest priority first: `--config FILE`, then `$HAX_MCP_CONFIG` (each names one
+file and stands alone), then the global `~/.config/hax/mcp/config.json` with the nearest `.mcp.json`
+at or above the working directory **merged over** it. A project entry whose name matches a global
+one replaces it; global names the project does not mention are inherited. The search for
+`.mcp.json` stops at the repository root and never ascends past your home directory. A project can
+also shadow the skill by putting its own at `.agents/skills/mcp/SKILL.md`. Python 3 is the only
+requirement; there are no packages to install.
 
 `pyproject.toml` packages the bridge as the `mcpc` console script (`pip install ./MCP`,
 `pipx install ./MCP`). Installing is optional: the script runs straight from a checkout.
@@ -102,15 +106,21 @@ VS Code uses) and ignores root keys it does not know, such as VS Code's `inputs`
 Desktop, Cursor, or VS Code file drops in unchanged — except that an entry using a `url` will not
 be understood by those clients in turn.
 
+A `.mcp.json` in a project is picked up automatically (see [Install](#install)), which makes a
+per-project server list — including a shared, checked-in one — work without touching the global
+config. It merges over the global file: same name wins from the project, other names are
+inherited. Keep credentials out of a checked-in project file: put them in an untracked file, or
+in the global config.
+
 ## Tests
 
 ```sh
 python3 scripts/mcp_bridge_selftest.py
 ```
 
-Covers result rendering, the SSE reply decoder, config resolution, both spellings of `command`
-and `args`, `env` merging and its validation, the `stop` pid checks, and a real JSON-RPC round
-trip against a stub server.
+Covers result rendering, the SSE reply decoder, config resolution (both spellings of `command`
+and `args`, `env` merging and its validation, and the `.mcp.json` search and precedence), the
+`stop` pid checks, and a real JSON-RPC round trip against a stub server.
 
 ## Why not build it into hax
 

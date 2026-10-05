@@ -11,7 +11,8 @@ capabilities through the command tool it already has. Standard library only, no 
     mcpc read <server> <uri>            read a resource
     mcpc stop <server>                  stop a server this script started (url + start)
 
-Global options: --config FILE (default $HAX_MCP_CONFIG or ~/.config/hax/mcp/config.json),
+Global options: --config FILE (default $HAX_MCP_CONFIG, else the nearest .mcp.json at or above the
+working directory merged over ~/.config/hax/mcp/config.json, with project entries winning),
 --json (print raw JSON-RPC results instead of readable text).
 
 Servers are declared in the config file, using the MCP JSON configuration standard:
@@ -52,6 +53,7 @@ from typing import NoReturn
 PROTOCOL_VERSION = "2025-06-18"
 CLIENT_INFO = {"name": "mcpc", "version": "1"}
 DEFAULT_CONFIG = "~/.config/hax/mcp/config.json"
+PROJECT_CONFIG = ".mcp.json"
 CALL_TIMEOUT = float(os.environ.get("MCPC_TIMEOUT", "180"))
 START_TIMEOUT = float(os.environ.get("MCPC_START_TIMEOUT", "20"))
 
@@ -66,8 +68,42 @@ def state_dir():
     return os.path.join(base, "hax", "mcp")
 
 
-def config_path(explicit):
-    return os.path.expanduser(explicit or os.environ.get("HAX_MCP_CONFIG") or DEFAULT_CONFIG)
+def project_config(start=None):
+    """The nearest .mcp.json at or above `start` (the working directory by default).
+
+    The search stops at the repository root, and never ascends above the home directory:
+    a file in a parent — /home or /, say — cannot silently shadow every project below it.
+    The directory's own .mcp.json is still honoured; only the ascent is cut short. """
+    here = os.path.abspath(start or os.getcwd())
+    home = os.path.abspath(os.path.expanduser("~"))
+    while True:
+        candidate = os.path.join(here, PROJECT_CONFIG)
+        if os.path.isfile(candidate):
+            return candidate
+        # ".git" is a directory in a normal checkout and a file in a linked worktree.
+        if os.path.exists(os.path.join(here, ".git")) or here == home:
+            return None
+        parent = os.path.dirname(here)
+        if parent == here:
+            return None
+        here = parent
+
+
+def config_files(explicit):
+    """The config files to read, lowest priority first.
+
+    --config and $HAX_MCP_CONFIG each name one file and stand alone. Otherwise the global file
+    is read, and a project .mcp.json overlays it: a server both define comes from the project.
+    """
+    if explicit:
+        return [os.path.expanduser(explicit)]
+    from_env = os.environ.get("HAX_MCP_CONFIG")
+    if from_env:
+        return [os.path.expanduser(from_env)]
+    project = project_config()
+    if project:
+        return [os.path.expanduser(DEFAULT_CONFIG), project]
+    return [os.path.expanduser(DEFAULT_CONFIG)]
 
 
 # "mcpServers" is the MCP JSON configuration standard; "servers" is the older mcpc spelling,
@@ -75,10 +111,13 @@ def config_path(explicit):
 SERVER_KEYS = ("mcpServers", "servers")
 
 
-def load_servers(path):
+def read_servers(path):
+    """The server map in one file. A file that does not exist has none."""
     try:
         with open(path) as handle:
             data = json.load(handle)
+    except FileNotFoundError:
+        return None
     except OSError as exc:
         die("cannot read %s: %s" % (path, exc.strerror))
     except ValueError as exc:
@@ -92,6 +131,27 @@ def load_servers(path):
                 die('%s: "%s" must be an object' % (path, key))
             return servers
     die('%s has no "mcpServers" object; "servers" is also accepted' % path)
+
+
+def load_servers(paths):
+    """Merge the files in `paths`, first listed lowest priority.
+
+    A later file overrides an earlier one per server name, so a project entry replaces a global
+    entry of the same name. Only a name the project does not mention is inherited. """
+    if isinstance(paths, str):
+        paths = [paths]
+    paths = list(paths)
+    merged = {}
+    found = False
+    for path in paths:
+        servers = read_servers(path)
+        if servers is None:
+            continue
+        found = True
+        merged.update(servers)
+    if not found:
+        die("cannot read %s" % ", ".join(paths))
+    return merged
 
 
 def entry_for(servers, name):
@@ -563,7 +623,7 @@ def parse_args(argv):
 
 def main(argv):
     args = parse_args(argv)
-    servers = load_servers(config_path(args.config))
+    servers = load_servers(config_files(args.config))
     if args.command == "servers":
         return list_servers(servers, args.json)
     entry = entry_for(servers, args.server)

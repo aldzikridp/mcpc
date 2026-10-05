@@ -63,7 +63,7 @@ def test_config():
         check("servers lists every name", mcpc.list_servers(servers, False) == 0)
         check("servers accepts no server argument", mcpc.parse_args(["servers"]).command == "servers")
         os.environ["HAX_MCP_CONFIG"] = path
-        check("env var selects the config", mcpc.config_path(None) == path)
+        check("env var selects the config", mcpc.config_files(None) == [path])
         for argv in (["servers", "t"], ["list"]):
             try:
                 mcpc.parse_args(argv)
@@ -132,6 +132,129 @@ def test_entries():
             check("%s is rejected" % message, False)
         except SystemExit as exc:
             check("%s is rejected" % message, exc.code == 2)
+
+
+def test_merge():
+    """A project file overlays the global one: same name overridden, new names inherited."""
+    with tempfile.TemporaryDirectory() as tmp:
+        global_file = os.path.join(tmp, "config.json")
+        project_file = os.path.join(tmp, ".mcp.json")
+        with open(global_file, "w") as handle:
+            json.dump({"mcpServers": {"shared": {"command": "global"}, "only_global": {"command": "g"}}}, handle)
+        with open(project_file, "w") as handle:
+            json.dump({"mcpServers": {"shared": {"command": "project"}, "only_project": {"command": "p"}}}, handle)
+
+        merged = mcpc.load_servers([global_file, project_file])
+        check("a project entry overrides a global one", merged["shared"]["command"] == "project")
+        check("a global entry the project omits is inherited", merged["only_global"]["command"] == "g")
+        check("a project-only entry is added", merged["only_project"]["command"] == "p")
+
+        # Order is the priority: the later file wins.
+        reversed_merge = mcpc.load_servers([project_file, global_file])
+        check("list order decides the override", reversed_merge["shared"]["command"] == "global")
+
+        # One file still works, and a missing file is not an error when another provides servers.
+        check("a single file still loads", mcpc.load_servers([global_file])["shared"]["command"] == "global")
+        check("a bare path is accepted", mcpc.load_servers(global_file)["shared"]["command"] == "global")
+        partial = mcpc.load_servers([os.path.join(tmp, "absent.json"), project_file])
+        check("a missing file is skipped when another exists", partial["only_project"]["command"] == "p")
+
+        # Nothing readable at all is still a configuration error.
+        try:
+            mcpc.load_servers([os.path.join(tmp, "absent.json"), os.path.join(tmp, "also-absent.json")])
+            check("all files missing is rejected", False)
+        except SystemExit as exc:
+            check("all files missing is rejected", exc.code == 2)
+
+        # Malformed JSON is fatal even when the other file is fine.
+        broken = os.path.join(tmp, "broken.json")
+        with open(broken, "w") as handle:
+            handle.write("{not json")
+        try:
+            mcpc.load_servers([broken, project_file])
+            check("malformed JSON is rejected", False)
+        except SystemExit as exc:
+            check("malformed JSON is rejected", exc.code == 2)
+
+
+def test_project_config():
+    """The working-directory .mcp.json search, and its precedence."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = os.path.join(tmp, "repo")
+        nested = os.path.join(root, "pkg", "deep")
+        os.makedirs(nested)
+        os.makedirs(os.path.join(root, ".git"))
+        project = os.path.join(root, ".mcp.json")
+        check("no .mcp.json anywhere above", mcpc.project_config(nested) is None)
+
+        with open(project, "w") as handle:
+            json.dump({"mcpServers": {"p": {"command": "cat"}}}, handle)
+        check("a project file is found from a nested directory", mcpc.project_config(nested) == project)
+        check("it is found from the root itself", mcpc.project_config(root) == project)
+
+        # A file outside the repository must not be picked up.
+        outside = os.path.join(tmp, ".mcp.json")
+        with open(outside, "w") as handle:
+            json.dump({"mcpServers": {"o": {"command": "cat"}}}, handle)
+        check("the walk stops at the repo root", mcpc.project_config(nested) == project)
+
+        # Only the nearest one applies.
+        nearer = os.path.join(root, "pkg", ".mcp.json")
+        with open(nearer, "w") as handle:
+            json.dump({"mcpServers": {"n": {"command": "cat"}}}, handle)
+        check("the nearest project file wins", mcpc.project_config(nested) == nearer)
+
+        # Precedence: --config and the env var each stand alone; otherwise the project file
+        # is merged over the global default.
+        os.environ.pop("HAX_MCP_CONFIG", None)
+        global_default = os.path.expanduser(mcpc.DEFAULT_CONFIG)
+        cwd = os.getcwd()
+        os.chdir(nested)
+        try:
+            check(
+                "the project file is merged over the global default",
+                mcpc.config_files(None) == [global_default, nearer],
+            )
+            os.environ["HAX_MCP_CONFIG"] = "/tmp/from-env.json"
+            check("the env var stands alone", mcpc.config_files(None) == ["/tmp/from-env.json"])
+            check("--config stands alone", mcpc.config_files("/tmp/explicit.json") == ["/tmp/explicit.json"])
+        finally:
+            os.chdir(cwd)
+            os.environ.pop("HAX_MCP_CONFIG", None)
+
+    # The home directory itself is honoured, but the walk does not ascend past it: HOME is
+    # normally not a repository, so ".git" alone would let the search escape into /home.
+    with tempfile.TemporaryDirectory() as home:
+        real_home = os.environ.get("HOME")
+        os.environ["HOME"] = home
+        deep = os.path.join(home, "work", "nested")
+        os.makedirs(deep)
+        above = os.path.join(os.path.dirname(home), mcpc.PROJECT_CONFIG)
+        with open(above, "w") as handle:
+            json.dump({"mcpServers": {"above": {"command": "cat"}}}, handle)
+        try:
+            check("a file above $HOME is not found", mcpc.project_config(deep) is None)
+            at_home = os.path.join(home, mcpc.PROJECT_CONFIG)
+            with open(at_home, "w") as handle:
+                json.dump({"mcpServers": {"h": {"command": "cat"}}}, handle)
+            check("a file in $HOME is still found", mcpc.project_config(deep) == at_home)
+        finally:
+            os.unlink(above)
+            if real_home is not None:
+                os.environ["HOME"] = real_home
+
+    # Where there is no project file, the global default stands.
+    with tempfile.TemporaryDirectory() as tmp:
+        os.makedirs(os.path.join(tmp, ".git"))  # bound the walk, so the test is hermetic
+        cwd = os.getcwd()
+        os.chdir(tmp)
+        try:
+            check(
+                "the global default stands alone with no project file",
+                mcpc.config_files(None) == [os.path.expanduser(mcpc.DEFAULT_CONFIG)],
+            )
+        finally:
+            os.chdir(cwd)
 
 
 def test_stdio_roundtrip():
@@ -210,6 +333,8 @@ if __name__ == "__main__":
     test_samples()
     test_config()
     test_entries()
+    test_merge()
+    test_project_config()
     test_stdio_roundtrip()
     test_stop()
     print("all checks passed")

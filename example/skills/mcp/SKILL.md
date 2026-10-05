@@ -19,9 +19,14 @@ mcpc stop <server>                          # stop a server mcpc started with ur
 
 Run it as `mcpc` when it is on `PATH`, or as `python3 scripts/mcp_bridge.py` from the mcpc
 repository. It needs only Python 3, no packages. `--json` prints the raw JSON-RPC result, and
-`--config FILE` selects other server definitions (`~/.config/hax/mcp/config.json` by default),
-which follow the MCP JSON configuration standard: an `mcpServers` object of `command`/`args`/`env`
-entries.
+`--config FILE` selects a specific file. The config is the MCP JSON configuration standard — an
+`mcpServers` object of `command`/`args`/`env` entries. By default the global
+`~/.config/hax/mcp/config.json` is read, and a `.mcp.json` in the project tree is merged over it:
+a name both define comes from the project, other global names remain available.
+
+**A project `.mcp.json` is merged over the global config, not substituted for it.** `mcpc servers`
+in a project tree therefore lists the global servers plus any the project adds, with the project's
+version of a shared name winning.
 
 **Always `mcpc servers` to see which servers exist, then `mcpc list <server>` before the first
 call in a session.** Tool names and argument names are server-defined and change without notice;
