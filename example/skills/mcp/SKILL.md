@@ -10,13 +10,15 @@ Some capabilities are only reachable through a Model Context Protocol server. `m
 to the shell so it can be used like any other CLI:
 
 ```sh
+mcpc servers                                # configured server names
 mcpc list <server>                          # tool names and descriptions
 mcpc call <server> <tool> '{"json":"args"}' # call a tool (arguments default to {})
 mcpc read <server> <uri>                    # read a resource
 mcpc stop <server>                          # stop a server mcpc started
 ```
 
-`mcpc` lives in this repository at `MCP/scripts/mcp_bridge.py`; run it as
+`mcpc servers` is the way to see what exists; pick a name from it instead of guessing. `mcpc`
+lives in this repository at `MCP/scripts/mcp_bridge.py`; run it as
 `python3 MCP/scripts/mcp_bridge.py` from the repository root (or install it on `PATH`). It needs
 only Python 3, no packages. `--json` prints the raw JSON-RPC result, and `--config FILE` selects
 other server definitions (`~/.config/hax/mcp/config.json` by default).

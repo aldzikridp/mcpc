@@ -60,8 +60,16 @@ def test_config():
             json.dump({"servers": {"t": {"command": ["cat"]}}}, handle)
         servers = mcpc.load_servers(path)
         check("config loads a server", mcpc.entry_for(servers, "t")["command"] == ["cat"])
+        check("servers lists every name", mcpc.list_servers(servers, False) == 0)
+        check("servers accepts no server argument", mcpc.parse_args(["servers"]).command == "servers")
         os.environ["HAX_MCP_CONFIG"] = path
         check("env var selects the config", mcpc.config_path(None) == path)
+        for argv in (["servers", "t"], ["list"]):
+            try:
+                mcpc.parse_args(argv)
+                check("%s is rejected by the parser" % " ".join(argv), False)
+            except SystemExit as exc:
+                check("%s is rejected by the parser" % " ".join(argv), exc.code == 2)
 
 
 def test_stdio_roundtrip():

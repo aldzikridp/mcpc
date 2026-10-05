@@ -5,6 +5,7 @@
 Bridge a Model Context Protocol server to the shell, so a coding agent reaches MCP-only
 capabilities through the command tool it already has. Standard library only, no coroutines.
 
+    mcpc servers                        the configured server names, one per line
     mcpc list <server>                  tool names and descriptions, one per line
     mcpc call <server> <tool> [json]    call a tool; arguments default to {}
     mcpc read <server> <uri>            read a resource
@@ -374,6 +375,15 @@ def connect(name, entry):
     return transport
 
 
+def list_servers(servers, as_json):
+    if as_json:
+        print(json.dumps({"servers": servers}, indent=2))
+        return 0
+    for name in sorted(servers):
+        print(name)
+    return 0
+
+
 def first_line(text, width=110):
     if not text:
         return ""
@@ -445,10 +455,14 @@ def parse_args(argv):
     )
     parser.add_argument("--config", metavar="FILE", help="server definitions (JSON)")
     parser.add_argument("--json", action="store_true", help="print raw JSON-RPC results")
-    parser.add_argument("command", choices=["list", "call", "read", "stop"])
-    parser.add_argument("server")
+    parser.add_argument("command", choices=["servers", "list", "call", "read", "stop"])
+    parser.add_argument("server", nargs="?")
     parser.add_argument("rest", nargs="*", help="tool name and JSON arguments, or a resource URI")
     args = parser.parse_args(argv)
+    if args.command == "servers" and (args.server or args.rest):
+        parser.error("servers takes no arguments")
+    if args.command != "servers" and not args.server:
+        parser.error("%s needs a server" % args.command)
     if args.command == "call" and len(args.rest) < 1:
         parser.error("call needs a tool name")
     if args.command in ("call", "read") and len(args.rest) > 2:
@@ -459,6 +473,8 @@ def parse_args(argv):
 def main(argv):
     args = parse_args(argv)
     servers = load_servers(config_path(args.config))
+    if args.command == "servers":
+        return list_servers(servers, args.json)
     entry = entry_for(servers, args.server)
     if args.command == "stop":
         return stop_server(args.server)

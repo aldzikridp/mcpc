@@ -3,21 +3,22 @@
 Reach Model Context Protocol servers from hax without waiting for a native MCP client.
 
 `scripts/mcp_bridge.py` (`mcpc`) is a small MCP client: it spawns stdio servers or talks
-streamable HTTP to remote ones, and exposes the protocol as three shell commands. `skills/mcp/`
-teaches the agent when and how to use it. Nothing here is compiled into hax and nothing outside
-this directory changes.
+streamable HTTP to remote ones, and exposes the protocol as five shell commands.
+`example/skills/mcp/` teaches the agent when and how to use it. Nothing here is compiled into
+hax and nothing outside this directory changes.
 
 ```
 MCP/
 ├── README.md
 ├── pyproject.toml              # optional: installs mcpc as a console script
 ├── scripts/
-│   ├── mcp_bridge.py           # mcpc: list, call, read, stop
+│   ├── mcp_bridge.py           # mcpc: servers, list, call, read, stop
 │   ├── mcp_bridge_selftest.py  # python3 mcp_bridge_selftest.py
 │   └── mcp.json                # example server definitions
-└── skills/
-    └── mcp/
-        └── SKILL.md            # when the agent should reach for mcpc
+└── example/
+    └── skills/
+        └── mcp/
+            └── SKILL.md        # when the agent should reach for mcpc
 ```
 
 ## Install
@@ -33,7 +34,7 @@ cp MCP/scripts/mcp.json ~/.config/hax/mcp/config.json
 
 # Make the agent aware of it (discovered for every project).
 mkdir -p ~/.config/hax/skills
-cp -r MCP/skills/mcp ~/.config/hax/skills/
+cp -r MCP/example/skills/mcp ~/.config/hax/skills/
 ```
 
 The bridge reads `~/.config/hax/mcp/config.json` by default and `HAX_MCP_CONFIG` or `--config FILE`
@@ -46,6 +47,7 @@ Python 3 is the only requirement; there are no packages to install.
 ## Use
 
 ```sh
+mcpc servers                                # configured server names
 mcpc list <server>                          # tool names and descriptions
 mcpc call <server> <tool> '{"key":"value"}' # call a tool (arguments default to {})
 mcpc read <server> <uri>                    # read a resource
