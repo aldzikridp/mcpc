@@ -4,6 +4,9 @@
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
     },
+    "remote": {
+      "url": "https://example.com/mcp"
+    },
     "obscura": {
       "url": "http://127.0.0.1:3000/mcp",
       "start": ["obscura", "mcp", "--http", "--port", "3000"]

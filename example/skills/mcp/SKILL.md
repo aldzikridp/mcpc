@@ -11,6 +11,7 @@ to the shell so it can be used like any other CLI:
 
 ```sh
 mcpc servers                                # configured server names
+mcpc ps                                     # background servers mcpc started
 mcpc list <server>                          # tool names and descriptions
 mcpc call <server> <tool> '{"json":"args"}' # call a tool (arguments default to {})
 mcpc read <server> <uri>                    # read a resource
@@ -31,6 +32,12 @@ version of a shared name winning.
 **Always `mcpc servers` to see which servers exist, then `mcpc list <server>` before the first
 call in a session.** Tool names and argument names are server-defined and change without notice;
 guessing them wastes a round trip.
+
+`mcpc ps` shows the background servers mcpc started, with `alive` or `stale`, pid, port, and how
+long ago they started — check it before starting anything, and after a call fails, to see whether
+a server is still up. A `stale` entry is a leftover record for a process that is gone; leaving it
+costs nothing, and `mcpc stop <server>` clears it. Only `url` + `start` servers ever appear there:
+a stdio server is spawned per call and never persists.
 
 ## Obscura
 

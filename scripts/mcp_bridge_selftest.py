@@ -257,6 +257,64 @@ def test_project_config():
             os.chdir(cwd)
 
 
+def test_ps():
+    """ps reports the pid records, and says which processes are actually still there."""
+    with tempfile.TemporaryDirectory() as tmp:
+        os.environ["XDG_STATE_HOME"] = tmp
+        check("nothing running is an empty list", mcpc.running_servers() == [])
+        check("ps with nothing running succeeds", mcpc.list_running(None, False) == 0)
+
+        os.makedirs(mcpc.state_dir(), exist_ok=True)
+
+        # The command line of this test process, as the kernel reports it. argv[0] is the
+        # *invocation* name ("python3"), not the resolved sys.executable, which is exactly
+        # what mcpc records: the string it handed to Popen.
+        self_cmd = mcpc.process_command(os.getpid())
+
+        def write_pid(name, pid, argv, port=None):
+            with open(mcpc.pid_path(name), "w") as handle:
+                json.dump({"pid": pid, "argv": argv, "port": port}, handle)
+
+        write_pid("live", os.getpid(), [self_cmd, "-c", "pass"], port=3000)
+        # A pid past the maximum is not running.
+        write_pid("stale", 2 ** 22, ["obscura", "mcp"], port=3001)
+
+        found = {server["name"]: server for server in mcpc.running_servers()}
+        check("ps lists every recorded server", set(found) == {"live", "stale"})
+        check("a live process is alive", found["live"]["alive"] is True)
+        check("its port is reported", found["live"]["port"] == 3000)
+        check("its command is reported", found["live"]["command"].startswith(self_cmd))
+        check("a dead pid is not alive", found["stale"]["alive"] is False)
+
+        # Same pid, but the command line no longer matches what was recorded.
+        write_pid("recycled", os.getpid(), ["/definitely/not/this/process"])
+        found = {server["name"]: server for server in mcpc.running_servers()}
+        check("a recycled pid is not alive", found["recycled"]["alive"] is False)
+
+        check("ps exits 0 with entries", mcpc.list_running(None, False) == 0)
+        os.unlink(mcpc.pid_path("live"))
+        os.unlink(mcpc.pid_path("stale"))
+        os.unlink(mcpc.pid_path("recycled"))
+
+        # A file that is not a pid record at all must not crash the listing.
+        with open(mcpc.pid_path("garbage"), "w") as handle:
+            handle.write("{not json")
+        check("a malformed record is tolerated", mcpc.running_servers()[0]["pid"] is None)
+        os.unlink(mcpc.pid_path("garbage"))
+
+        # A server that is no longer in any config can still be listed and stopped: both act
+        # on the recorded state, not on the configuration.
+        write_pid("dropped", os.getpid(), ["/definitely/not/this/process"])
+        check("a dropped server still appears", [s["name"] for s in mcpc.running_servers()] == ["dropped"])
+        check("and can still be stopped", mcpc.stop_server("dropped") == 1)
+        check("which clears its record", mcpc.recorded_pid("dropped") is None)
+
+        check("durations render", mcpc.format_duration(5) == "5s")
+        check("minutes render", mcpc.format_duration(120) == "2m")
+        check("hours render", mcpc.format_duration(3720) == "1h02m")
+        check("days render", mcpc.format_duration(90000) == "1d")
+
+
 def test_stdio_roundtrip():
     """A real JSON-RPC exchange with a stub server on stdin/stdout."""
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as handle:
@@ -335,6 +393,7 @@ if __name__ == "__main__":
     test_entries()
     test_merge()
     test_project_config()
+    test_ps()
     test_stdio_roundtrip()
     test_stop()
     print("all checks passed")

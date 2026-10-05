@@ -12,7 +12,7 @@ MCP/
 ├── README.md
 ├── pyproject.toml              # optional: installs mcpc as a console script
 ├── scripts/
-│   ├── mcp_bridge.py           # mcpc: servers, list, call, read, stop
+│   ├── mcp_bridge.py           # mcpc: servers, ps, list, call, read, stop
 │   ├── mcp_bridge_selftest.py  # python3 mcp_bridge_selftest.py
 │   └── mcp.json                # example server definitions (packaged)
 └── example/
@@ -52,6 +52,7 @@ requirement; there are no packages to install.
 
 ```sh
 mcpc servers                                # configured server names
+mcpc ps                                     # background servers mcpc started
 mcpc list <server>                          # tool names and descriptions
 mcpc call <server> <tool> '{"key":"value"}' # call a tool (arguments default to {})
 mcpc read <server> <uri>                    # read a resource
@@ -98,8 +99,83 @@ command (stdio) or — an mcpc extension — a URL (streamable HTTP):
   it running until `mcpc stop <server>`. Without `start`, something else must be listening.
   `mcpc stop` only signals a process whose command line still matches the one it recorded.
 
-The shipped `scripts/mcp.json` defines working examples. Both are examples; delete or replace
-them.
+`url` and `start` are mcpc extensions — the standard describes stdio servers only — so they are
+also the two fields no other client will understand. Use `url` when one long-lived process should
+serve every call; use `command` when a fresh process per call is fine.
+
+### `url` — a server someone else already runs
+
+```json
+{
+  "mcpServers": {
+    "remote": {"url": "https://example.com/mcp"}
+  }
+}
+```
+
+`url` points at a streamable HTTP endpoint and is used as-is; mcpc never starts anything for it,
+so something must already be listening. If nothing is, you get an exit-3 connection error:
+
+```sh
+mcpc list remote
+mcpc: remote: cannot reach https://example.com/mcp: <urlopen error [Errno 111] Connection refused>
+```
+
+Prefer this when the server is remote, or when you start the daemon yourself and want mcpc to
+leave its lifetime alone.
+
+### `url` + `start` — mcpc starts it, and keeps it running
+
+```json
+{
+  "mcpServers": {
+    "obscura": {
+      "url": "http://127.0.0.1:3000/mcp",
+      "start": ["obscura", "mcp", "--http", "--port", "3000"]
+    }
+  }
+}
+```
+
+`start` is an argv array. On first use, if the URL's port is not already accepting connections,
+mcpc runs it in the background (detached, so it outlives the call), appends its output to
+`$XDG_STATE_HOME/hax/mcp/<server>.log`, and records its pid. It then waits up to
+`$MCPC_START_TIMEOUT` (20s) for the port to open. `start` is always a list — `"start": "obscura"`
+is a configuration error, because there would be no way to pass the port and mode flags.
+
+This is the shape for a server that holds state between calls: a browser session, a warm cache.
+`obscura` keeps one live page, so a server spawned per call would lose the page (and its cookies)
+every time.
+
+It is idempotent, and a port already listening is taken as the server:
+
+```sh
+mcpc list obscura      # starts it if needed, then lists tools
+mcpc ps                # obscura  alive, pid 31144, port 3000, up 2m
+mcpc stop obscura      # stops it, and clears the record
+```
+
+Read the failure modes off the message, which names the cause:
+
+```sh
+mcpc: broken: cannot run definitely-not-a-real-binary: No such file or directory   # exit 3
+mcpc: broken: `my-server --http` did not listen on port 4000 within 20s; see ...log # exit 3
+mcpc: broken: `my-server --http` exited with status 1; see ...log                   # exit 3
+```
+
+`start` needs no privilege mcpc does not already have, but it does mean the process survives the
+command — that is the point — so use `mcpc ps` and `mcpc stop` to manage it rather than expecting
+it to go away on its own.
+
+`mcpc ps` lists the servers mcpc started, one per line, with whether the process is still there
+(`alive` or `stale`), its pid, its port if it has one, and how long ago it was started. It reads
+the same records `mcpc stop` acts on, needs no config file, and so still lists a server that has
+since been removed from the configuration. A stale record — a crash, a reboot, a recycled pid — is
+shown rather than hidden, and `mcpc stop <server>` clears it. Only `url` (+ `start`) servers ever
+appear there: a `command` server is spawned per call and never persists.
+
+The shipped `scripts/mcp.json` shows all three shapes — a stdio `command`, a bare `url`, and
+`url` + `start`. They are examples; delete or replace them.
 
 `mcpServers` is the standard key; mcpc also accepts `servers` (its older spelling, and the key
 VS Code uses) and ignores root keys it does not know, such as VS Code's `inputs`. So a Claude
@@ -119,8 +195,8 @@ python3 scripts/mcp_bridge_selftest.py
 ```
 
 Covers result rendering, the SSE reply decoder, config resolution (both spellings of `command`
-and `args`, `env` merging and its validation, and the `.mcp.json` search and precedence), the
-`stop` pid checks, and a real JSON-RPC round trip against a stub server.
+and `args`, `env` merging and its validation, and the `.mcp.json` search, merge, and precedence),
+the `ps` listing and `stop` pid checks, and a real JSON-RPC round trip against a stub server.
 
 ## Why not build it into hax
 
