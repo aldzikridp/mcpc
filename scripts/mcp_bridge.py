@@ -22,8 +22,8 @@ Servers are declared in the config file, using the MCP JSON configuration standa
       "filesystem": {"command": "npx",
                      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
                      "env": {"LOG_LEVEL": "debug"}},
-      "obscura": {"url": "http://127.0.0.1:3000/mcp",
-                  "start": ["obscura", "mcp", "--http", "--port", "3000"]}}}
+      "browser": {"url": "http://127.0.0.1:3000/mcp",
+                  "start": ["my-server", "mcp", "--http", "--port", "3000"]}}}
 
 `command` names the executable and `args` its arguments; `env` adds environment variables to
 the ones already set. A server with `command` is spawned per call and speaks JSON-RPC over

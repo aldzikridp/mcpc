@@ -18,7 +18,9 @@ MCP/
 └── example/
     └── skills/
         └── mcp/
-            └── SKILL.md        # when the agent should reach for mcpc
+            ├── SKILL.md            # the bridge: configuring, calling, and managing servers
+            └── filesystem/
+                └── SKILL.md        # one skill per server, for that server's tools
 ```
 
 ## Install
@@ -129,9 +131,9 @@ leave its lifetime alone.
 ```json
 {
   "mcpServers": {
-    "obscura": {
+    "browser": {
       "url": "http://127.0.0.1:3000/mcp",
-      "start": ["obscura", "mcp", "--http", "--port", "3000"]
+      "start": ["my-server", "mcp", "--http", "--port", "3000"]
     }
   }
 }
@@ -140,19 +142,19 @@ leave its lifetime alone.
 `start` is an argv array. On first use, if the URL's port is not already accepting connections,
 mcpc runs it in the background (detached, so it outlives the call), appends its output to
 `$XDG_STATE_HOME/hax/mcp/<server>.log`, and records its pid. It then waits up to
-`$MCPC_START_TIMEOUT` (20s) for the port to open. `start` is always a list — `"start": "obscura"`
+`$MCPC_START_TIMEOUT` (20s) for the port to open. `start` is always a list — `"start": "my-server"`
 is a configuration error, because there would be no way to pass the port and mode flags.
 
-This is the shape for a server that holds state between calls: a browser session, a warm cache.
-`obscura` keeps one live page, so a server spawned per call would lose the page (and its cookies)
-every time.
+This is the shape for a server that holds state between calls: a browser session, a warm cache. A
+server that keeps one live page would lose it (and its cookies) if a fresh process served every
+call, so pinning it to one long-lived process is the point of `url` + `start`.
 
 It is idempotent, and a port already listening is taken as the server:
 
 ```sh
-mcpc list obscura      # starts it if needed, then lists tools
-mcpc ps                # obscura  alive, pid 31144, port 3000, up 2m
-mcpc stop obscura      # stops it, and clears the record
+mcpc list browser      # starts it if needed, then lists tools
+mcpc ps                # browser  alive, pid 31144, port 3000, up 2m
+mcpc stop browser      # stops it, and clears the record
 ```
 
 Read the failure modes off the message, which names the cause:
@@ -174,8 +176,9 @@ since been removed from the configuration. A stale record — a crash, a reboot,
 shown rather than hidden, and `mcpc stop <server>` clears it. Only `url` (+ `start`) servers ever
 appear there: a `command` server is spawned per call and never persists.
 
-The shipped `scripts/mcp.json` shows all three shapes — a stdio `command`, a bare `url`, and
-`url` + `start`. They are examples; delete or replace them.
+The shipped `scripts/mcp.json` shows the two shapes that need no private setup — a stdio `command`
+(`filesystem`) and a bare `url` (`remote`). The `url` + `start` form is shown above; it is for a
+server mcpc should launch and keep running. All of these are examples; delete or replace them.
 
 `mcpServers` is the standard key; mcpc also accepts `servers` (its older spelling, and the key
 VS Code uses) and ignores root keys it does not know, such as VS Code's `inputs`. So a Claude

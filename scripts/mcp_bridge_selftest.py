@@ -277,7 +277,7 @@ def test_ps():
 
         write_pid("live", os.getpid(), [self_cmd, "-c", "pass"], port=3000)
         # A pid past the maximum is not running.
-        write_pid("stale", 2 ** 22, ["obscura", "mcp"], port=3001)
+        write_pid("stale", 2 ** 22, ["my-server", "mcp"], port=3001)
 
         found = {server["name"]: server for server in mcpc.running_servers()}
         check("ps lists every recorded server", set(found) == {"live", "stale"})

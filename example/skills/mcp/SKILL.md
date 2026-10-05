@@ -1,7 +1,7 @@
 ---
 name: mcp
-description: Reach MCP servers — the packaged example is the Obscura browser — through the mcpc
-  bridge. Use when a request needs real-browser page automation.
+description: Reach MCP servers through the mcpc bridge. Use when a request needs a capability
+  that only an MCP server provides, or when a specific server skill applies.
 ---
 
 # MCP servers
@@ -20,46 +20,39 @@ mcpc stop <server>                          # stop a server mcpc started with ur
 
 Run it as `mcpc` when it is on `PATH`, or as `python3 scripts/mcp_bridge.py` from the mcpc
 repository. It needs only Python 3, no packages. `--json` prints the raw JSON-RPC result, and
-`--config FILE` selects a specific file. The config is the MCP JSON configuration standard — an
-`mcpServers` object of `command`/`args`/`env` entries. By default the global
-`~/.config/hax/mcp/config.json` is read, and a `.mcp.json` in the project tree is merged over it:
-a name both define comes from the project, other global names remain available.
+`--config FILE` selects one specific file.
 
-**A project `.mcp.json` is merged over the global config, not substituted for it.** `mcpc servers`
-in a project tree therefore lists the global servers plus any the project adds, with the project's
-version of a shared name winning.
+Server definitions follow the MCP JSON configuration standard: an `mcpServers` object of
+`command`/`args`/`env` entries. By default the global `~/.config/hax/mcp/config.json` is read and a
+`.mcp.json` in the project tree is **merged over** it — a name both define comes from the project,
+and other global names stay available. `--config` and `$HAX_MCP_CONFIG` each name one file and
+stand alone. A `url` (plus optional `start`) entry instead of `command` is an mcpc extension, not
+part of the standard, and marks a server that outlives a single call.
 
 **Always `mcpc servers` to see which servers exist, then `mcpc list <server>` before the first
 call in a session.** Tool names and argument names are server-defined and change without notice;
 guessing them wastes a round trip.
 
 `mcpc ps` shows the background servers mcpc started, with `alive` or `stale`, pid, port, and how
-long ago they started — check it before starting anything, and after a call fails, to see whether
-a server is still up. A `stale` entry is a leftover record for a process that is gone; leaving it
-costs nothing, and `mcpc stop <server>` clears it. Only `url` + `start` servers ever appear there:
-a stdio server is spawned per call and never persists.
+long ago they started. Check it before starting anything, and after a call fails, to see whether a
+server is still up. Only `url` + `start` servers ever appear there: a `command` server is spawned
+per call and never persists. A `stale` entry is a leftover record for a process that is gone; it
+costs nothing to leave, and `mcpc stop <server>` clears it. `stop` works on any server mcpc
+started, including one that has since been removed from the config.
 
-## Obscura
+## Server skills
 
-Server: `obscura` — local over streamable HTTP at `http://127.0.0.1:3000/mcp`. `mcpc` starts
-`obscura mcp --http --port 3000` on first use and leaves it running, which is what keeps the
-browser session (and its cookies) alive between calls. `url` and `start` are mcpc extensions, not
-part of the configuration standard.
+This file covers the bridge itself: configuring servers, listing them, calling them, and managing
+the ones that run in the background. What each server *does* — its tools, their arguments, and the
+conventions for using them — belongs in its own skill beside this file. Read the matching one
+before working with a server.
 
-```sh
-mcpc list obscura
-mcpc call obscura browser_navigate '{"url":"https://example.com"}'
-mcpc call obscura browser_markdown '{"max_chars":4000}'
-mcpc call obscura browser_click '{"ref":"e12"}'
-mcpc call obscura browser_close '{}'
-```
+| Server | Skill | Use for |
+| --- | --- | --- |
+| `filesystem` | `mcp/filesystem/SKILL.md` | Files in the server's allowed directories: read, write, search, inspect |
 
-Tools take no URL: the server keeps one live page. **Navigate first, then read or act.** Get
-element references from `browser_snapshot` and pass them to `browser_click` / `browser_fill`;
-references are only valid until the next navigation or interaction that rerenders the page. Use
-`browser_markdown` for reading and `browser_snapshot` when you need to interact. Close the page
-with `browser_close` when done, and tell the user `mcpc stop obscura` if they want the server
-itself stopped.
+Add a row, and a directory beside this file, for each server you configure. When a server's tools
+change, only its own skill needs updating. Delete the example row if you are not using that server.
 
 ## Failure modes
 
