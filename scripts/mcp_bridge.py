@@ -9,21 +9,26 @@ capabilities through the command tool it already has. Standard library only, no 
     mcpc list <server>                  tool names and descriptions, one per line
     mcpc call <server> <tool> [json]    call a tool; arguments default to {}
     mcpc read <server> <uri>            read a resource
-    mcpc stop <server>                  stop a server this script started (HTTP mode)
+    mcpc stop <server>                  stop a server this script started (url + start)
 
 Global options: --config FILE (default $HAX_MCP_CONFIG or ~/.config/hax/mcp/config.json),
 --json (print raw JSON-RPC results instead of readable text).
 
-Servers are declared in the config file:
+Servers are declared in the config file, using the MCP JSON configuration standard:
 
-    {"servers": {
-      "clickup": {"command": ["npx", "-y", "mcp-remote", "https://mcp.clickup.com/mcp"]},
+    {"mcpServers": {
+      "filesystem": {"command": "npx",
+                     "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
+                     "env": {"LOG_LEVEL": "debug"}},
       "obscura": {"url": "http://127.0.0.1:3000/mcp",
                   "start": ["obscura", "mcp", "--http", "--port", "3000"]}}}
 
-A server with `command` is spawned per call and speaks JSON-RPC over stdin/stdout. A server
-with `url` is called over streamable HTTP; adding `start` makes this script launch it on first
-use and leave it running, which is what keeps a browser session alive across calls.
+`command` names the executable and `args` its arguments; `env` adds environment variables to
+the ones already set. A server with `command` is spawned per call and speaks JSON-RPC over
+stdin/stdout. A server with `url` is called over streamable HTTP; adding `start` makes this
+script launch it on first use and leave it running, which is what keeps a browser session alive
+across calls. `url` and `start` are mcpc extensions: the JSON standard describes stdio servers
+only.
 
 Exit codes: 0 success, 1 the tool reported an error, 2 usage or configuration, 3 transport,
 authorization, or server startup failure.
@@ -65,6 +70,11 @@ def config_path(explicit):
     return os.path.expanduser(explicit or os.environ.get("HAX_MCP_CONFIG") or DEFAULT_CONFIG)
 
 
+# "mcpServers" is the MCP JSON configuration standard; "servers" is the older mcpc spelling,
+# still read so existing configs keep working. VS Code also uses "servers".
+SERVER_KEYS = ("mcpServers", "servers")
+
+
 def load_servers(path):
     try:
         with open(path) as handle:
@@ -73,10 +83,15 @@ def load_servers(path):
         die("cannot read %s: %s" % (path, exc.strerror))
     except ValueError as exc:
         die("%s is not valid JSON: %s" % (path, exc))
-    servers = data.get("servers") if isinstance(data, dict) else None
-    if not isinstance(servers, dict) or not servers:
-        die('%s has no "servers" object' % path)
-    return servers
+    if not isinstance(data, dict):
+        die('%s must be a JSON object with an "mcpServers" object' % path)
+    for key in SERVER_KEYS:
+        if key in data:
+            servers = data[key]
+            if not isinstance(servers, dict):
+                die('%s: "%s" must be an object' % (path, key))
+            return servers
+    die('%s has no "mcpServers" object; "servers" is also accepted' % path)
 
 
 def entry_for(servers, name):
@@ -86,6 +101,43 @@ def entry_for(servers, name):
     if not isinstance(entry, dict):
         die("server '%s' must be an object" % name)
     return entry
+
+
+def argv_for(name, entry):
+    """The argv to spawn, from either spelling of `command`.
+
+    The standard splits them: `command` is the executable and `args` an array. mcpc's older
+    spelling put the whole argv in `command` as an array, which is still accepted. """
+    command = entry.get("command")
+    args = entry.get("args") or []
+    if isinstance(command, str):
+        argv = [command]
+    elif isinstance(command, list):
+        argv = list(command)
+    else:
+        die('server \'%s\': "command" must be a string or an array' % name)
+    if not isinstance(args, list):
+        die('server \'%s\': "args" must be an array' % name)
+    return [str(part) for part in argv + args]
+
+
+def env_for(name, entry):
+    """The child environment, or None to inherit this process's unchanged.
+
+    `env` adds to the inherited environment rather than replacing it, matching the standard.
+    Values must be strings there; a number is converted, anything else is a configuration
+    error rather than something `Popen` would reject with a traceback. """
+    env = entry.get("env")
+    if env is None:
+        return None
+    if not isinstance(env, dict):
+        die('server \'%s\': "env" must be an object' % name)
+    merged = dict(os.environ)
+    for key, value in env.items():
+        if isinstance(value, bool) or value is None or isinstance(value, (list, dict)):
+            die('server \'%s\': env "%s" must be a string' % (name, key))
+        merged[str(key)] = str(value)
+    return merged
 
 
 def unwrap(message, method):
@@ -99,7 +151,7 @@ def unwrap(message, method):
 class StdioServer(object):
     """A server spawned per call, speaking JSON-RPC over stdin/stdout."""
 
-    def __init__(self, name, argv):
+    def __init__(self, name, argv, env=None):
         self.name = name
         self.argv = argv
         self.messages = queue.Queue()
@@ -110,6 +162,7 @@ class StdioServer(object):
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
+                env=env,
                 bufsize=0,
             )
         except OSError as exc:
@@ -273,6 +326,23 @@ def recorded_pid(name):
         return None
 
 
+def recorded_argv(name):
+    """The argv this script started for `name`, used to recognize the process again."""
+    try:
+        with open(pid_path(name)) as handle:
+            argv = json.load(handle).get("argv")
+    except (OSError, ValueError):
+        return None
+    return argv if isinstance(argv, list) and argv else None
+
+
+def forget_pid(name):
+    try:
+        os.unlink(pid_path(name))
+    except OSError:
+        pass
+
+
 def process_alive(pid):
     if not pid or pid <= 0:
         return False
@@ -334,22 +404,43 @@ def ensure_running(name, entry):
     )
 
 
+def process_command(pid):
+    """The command line of `pid`, or None if it is gone or unreadable."""
+    try:
+        with open("/proc/%d/cmdline" % pid, "rb") as handle:
+            return handle.read().split(b"\0")[0].decode("utf-8", "replace")
+    except OSError:
+        return None
+
+
 def stop_server(name):
     pid = recorded_pid(name)
     if pid is None:
         print("mcpc: no server started by this script for '%s'" % name)
         return 0
+    if not process_alive(pid):
+        # A pid file outlives a crash or a reboot, and pids get recycled: never signal a
+        # process just because its number was recorded here.
+        print("mcpc: %s (pid %d) is no longer running; nothing to stop" % (name, pid))
+        forget_pid(name)
+        return 0
+    recorded = recorded_argv(name)
+    started = recorded[0] if recorded else None
+    if recorded and process_command(pid) != started:
+        print(
+            "mcpc: pid %d is not %s any more; leaving it alone and forgetting the record"
+            % (pid, name),
+            file=sys.stderr,
+        )
+        forget_pid(name)
+        return 1
+    os.kill(pid, signal.SIGTERM)
+    deadline = time.monotonic() + 5
+    while process_alive(pid) and time.monotonic() < deadline:
+        time.sleep(0.1)
     if process_alive(pid):
-        os.kill(pid, signal.SIGTERM)
-        deadline = time.monotonic() + 5
-        while process_alive(pid) and time.monotonic() < deadline:
-            time.sleep(0.1)
-        if process_alive(pid):
-            os.kill(pid, signal.SIGKILL)
-    try:
-        os.unlink(pid_path(name))
-    except OSError:
-        pass
+        os.kill(pid, signal.SIGKILL)
+    forget_pid(name)
     print("stopped %s (pid %d)" % (name, pid))
     return 0
 
@@ -360,7 +451,7 @@ def connect(name, entry):
             ensure_running(name, entry)
         transport = HttpServer(name, entry["url"])
     elif entry.get("command"):
-        transport = StdioServer(name, [str(part) for part in entry["command"]])
+        transport = StdioServer(name, argv_for(name, entry), env_for(name, entry))
     else:
         die("server '%s' needs either \"url\" or \"command\"" % name)
     transport.request(

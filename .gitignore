@@ -9,6 +9,9 @@ build/
 dist/
 *.egg-info/
 
+# A local mcpc server config may hold credentials in an env block.
+config.json
+
 # Nix build symlinks
 result
 result-*

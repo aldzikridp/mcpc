@@ -14,7 +14,7 @@ MCP/
 ├── scripts/
 │   ├── mcp_bridge.py           # mcpc: servers, list, call, read, stop
 │   ├── mcp_bridge_selftest.py  # python3 mcp_bridge_selftest.py
-│   └── mcp.json                # example server definitions
+│   └── mcp.json                # example server definitions (packaged)
 └── example/
     └── skills/
         └── mcp/
@@ -28,9 +28,9 @@ MCP/
 pipx install ./MCP && mcpc --help
 install -m755 MCP/scripts/mcp_bridge.py ~/.local/bin/mcpc
 
-# Server definitions.
+# Server definitions, in the MCP JSON configuration standard.
 mkdir -p ~/.config/hax/mcp
-cp MCP/scripts/mcp.json ~/.config/hax/mcp/config.json
+cp MCP/example/mcp.json ~/.config/hax/mcp/config.json
 
 # Make the agent aware of it (discovered for every project).
 mkdir -p ~/.config/hax/skills
@@ -51,7 +51,7 @@ mcpc servers                                # configured server names
 mcpc list <server>                          # tool names and descriptions
 mcpc call <server> <tool> '{"key":"value"}' # call a tool (arguments default to {})
 mcpc read <server> <uri>                    # read a resource
-mcpc stop <server>                          # stop a server mcpc started
+mcpc stop <server>                          # stop a server mcpc started with url + start
 ```
 
 `mcpc --help` documents the rest. Exit codes: `0` success, `1` the tool reported an error,
@@ -59,12 +59,17 @@ mcpc stop <server>                          # stop a server mcpc started
 
 ## Server definitions
 
-Servers live in one JSON file. Each entry is either a command (stdio) or a URL (streamable HTTP):
+Servers live in one JSON file, in the MCP JSON configuration standard. Each entry is either a
+command (stdio) or — an mcpc extension — a URL (streamable HTTP):
 
 ```json
 {
-  "servers": {
-    "filesystem": {"command": ["npx", "-y", "@modelcontextprotocol/server-filesystem", "/tmp"]},
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
+      "env": {"LOG_LEVEL": "debug"}
+    },
     "remote": {"url": "https://example.com/mcp"},
     "local": {
       "url": "http://127.0.0.1:4000/mcp",
@@ -74,21 +79,28 @@ Servers live in one JSON file. Each entry is either a command (stdio) or a URL (
 }
 ```
 
-- `command` spawns the process per call and speaks JSON-RPC over its stdin/stdout. Use it for
-  local servers, including `npx` wrappers that add OAuth to a remote one.
+- `command` and `args` name the executable and its arguments. The process is spawned per call and
+  speaks JSON-RPC over its stdin/stdout. Use it for local servers, including `npx` wrappers that
+  add OAuth to a remote one.
+- `env` adds environment variables for that process, on top of the ones already set. Values must
+  be strings, as the standard requires; a number is converted, anything else (a boolean, null, a
+  list, an object) is a configuration error.
 - `url` uses streamable HTTP, which suits servers that keep expensive state — a browser, a
-  long-lived session — because one server process serves every call.
+  long-lived session — because one server process serves every call. `url` is not part of the
+  standard, which describes stdio servers only: a file that uses it is not portable to other
+  clients.
 - `start` is optional and complements `url`: when the port is not already listening, `mcpc` runs
   it in the background on first use, records its pid under `$XDG_STATE_HOME/hax/mcp/`, and leaves
   it running until `mcpc stop <server>`. Without `start`, something else must be listening.
+  `mcpc stop` only signals a process whose command line still matches the one it recorded.
 
-The shipped `scripts/mcp.json` defines two working examples: ClickUp over `npx mcp-remote` (a
-remote server that requires OAuth) and Obscura over `url` + `start` (a local HTTP server holding
-a browser session). Both are examples; delete or replace them.
+The shipped `scripts/mcp.json` defines working examples. Both are examples; delete or replace
+them.
 
-Root keys other than `servers` are ignored, so a Claude Desktop or Cursor `mcpServers` file can
-usually be converted by renaming that key, and each entry's `args` array flattened into
-`command`.
+`mcpServers` is the standard key; mcpc also accepts `servers` (its older spelling, and the key
+VS Code uses) and ignores root keys it does not know, such as VS Code's `inputs`. So a Claude
+Desktop, Cursor, or VS Code file drops in unchanged — except that an entry using a `url` will not
+be understood by those clients in turn.
 
 ## Tests
 
@@ -96,7 +108,8 @@ usually be converted by renaming that key, and each entry's `args` array flatten
 python3 scripts/mcp_bridge_selftest.py
 ```
 
-Covers result rendering, the SSE reply decoder, config resolution, and a real JSON-RPC round
+Covers result rendering, the SSE reply decoder, config resolution, both spellings of `command`
+and `args`, `env` merging and its validation, the `stop` pid checks, and a real JSON-RPC round
 trip against a stub server.
 
 ## Why not build it into hax

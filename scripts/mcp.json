@@ -1,7 +1,8 @@
 {
-  "servers": {
-    "clickup": {
-      "command": ["npx", "-y", "mcp-remote", "https://mcp.clickup.com/mcp"]
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
     },
     "obscura": {
       "url": "http://127.0.0.1:3000/mcp",
